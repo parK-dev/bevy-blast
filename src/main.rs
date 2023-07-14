@@ -22,8 +22,20 @@ struct DetonationState {
 #[derive(Component, Default)]
 struct Blasted(bool);
 
-#[derive(Debug)]
+#[derive(Component, Default)]
+struct BlastingGrid {
+    grid_size: usize,
+    spacing: f32, // Spacing between cubes
+    cube_hx: f32,
+    cube_hy: f32,
+    cube_hz: f32,
+    restitution_coefficient: f32,
+    blast_pattern: BlastPattern,
+}
+
+#[derive(Default, Debug)]
 enum BlastPattern {
+    #[default]
     RowByRow,
     LeftToRight,
     RightToLeft,
@@ -69,24 +81,21 @@ impl BlastPattern {
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugin(RapierPhysicsPlugin::<NoUserData>::default())
-        .add_plugin(RapierDebugRenderPlugin::default())
-        .add_startup_system(setup_graphics)
-        .add_startup_system(setup_physics)
-        .add_system(blast)
+        .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
+        .add_plugins(RapierDebugRenderPlugin::default())
+        .add_systems(Startup, setup)
+        .add_systems(Update, blast)
         .run();
 }
 
-fn setup_graphics(mut commands: Commands) {
-    // Add a camera so we can see the debug-render.
+fn setup(mut commands: Commands, mut rapier_config: ResMut<RapierConfiguration>) {
+    // Setup a Camera
     commands.spawn(Camera3dBundle {
         transform: Transform::from_xyz(-50.0, 25.0, 80.0).looking_at(Vec3::ZERO, Vec3::Y),
         ..Default::default()
     });
-}
 
-fn setup_physics(mut commands: Commands, mut rapier_config: ResMut<RapierConfiguration>) {
-    /* Create the ground. */
+    // Setup the Ground Collider
     let ground_size = 30.0;
     let ground_height = 0.;
 
@@ -96,32 +105,36 @@ fn setup_physics(mut commands: Commands, mut rapier_config: ResMut<RapierConfigu
         Ground,
     ));
 
-    commands.insert_resource(DetonationState::default());
+    // Setup Gravity
     rapier_config.gravity = Vec3::new(0.0, -9.81, 0.0);
-    /* Create a grid of cylinders. */
-    let grid_size = 20;
-    let spacing = 2.5; // Spacing between cubes
-    let cube_hx = 0.5;
-    let cube_hy = 0.5;
-    let cube_hz = 0.5;
-    let restitution_coefficient = 0.7;
-    let blast_pattern = BlastPattern::Zigzag;
 
-    for i in 0..grid_size {
-        for j in 0..grid_size {
-            let x = i as f32 * spacing - (grid_size as f32 / 2.0) * spacing;
-            let z = j as f32 * spacing - (grid_size as f32 / 2.0) * spacing;
+    // Setup a Blasting grid
+    let b = BlastingGrid {
+        grid_size: 20,
+        spacing: 2.5, // Spacing between cubes
+        cube_hx: 0.5,
+        cube_hy: 0.5,
+        cube_hz: 0.5,
+        restitution_coefficient: 0.7,
+        blast_pattern: BlastPattern::Random, // THE WORST METHOD IN HISTORY
+    };
+
+    for i in 0..b.grid_size {
+        for j in 0..b.grid_size {
+            let x = i as f32 * b.spacing - (b.grid_size as f32 / 2.0) * b.spacing;
+            let z = j as f32 * b.spacing - (b.grid_size as f32 / 2.0) * b.spacing;
             let y = 0.1;
 
+            // TODO: Turn into a bundle
             commands
                 .spawn(RigidBody::Dynamic)
-                .insert(Collider::cuboid(cube_hx, cube_hy, cube_hz))
-                .insert(Restitution::coefficient(restitution_coefficient))
+                .insert(Collider::cuboid(b.cube_hx, b.cube_hy, b.cube_hz))
+                .insert(Restitution::coefficient(b.restitution_coefficient))
                 .insert(TransformBundle::from(Transform::from_xyz(x, y, z)))
                 .insert(Hole)
                 .insert(Detonator {
                     timer: Timer::new(
-                        blast_pattern.get_timer_duration(i, j, grid_size),
+                        b.blast_pattern.get_timer_duration(i, j, b.grid_size),
                         TimerMode::Once,
                     ),
                 })
@@ -129,6 +142,11 @@ fn setup_physics(mut commands: Commands, mut rapier_config: ResMut<RapierConfigu
                 .insert(ExternalImpulse::default());
         }
     }
+
+    commands.spawn(b);
+
+    // Add the detonation state
+    commands.insert_resource(DetonationState::default());
 }
 
 fn blast(
@@ -150,8 +168,10 @@ fn blast(
 
             // If the timer finished and the force hasn't been applied yet, apply the force.
             if detonator.timer.finished() && !blasted.0 {
-                ext_impulse.impulse = Vec3::new(-10., 10., 0.);
+                ext_impulse.impulse = Vec3::new(-2., 10., 0.);
                 ext_impulse.torque_impulse = Vec3::new(0., 1., 0.);
+
+                // TODO: randomized misfires?
                 blasted.0 = true;
             }
         }
